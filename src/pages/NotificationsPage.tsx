@@ -44,19 +44,21 @@ export default function NotificationsPage(props: Props) {
               )}
               <div className="notice-list">
                 {groups.map((group) => <section className="notice-group" key={group.label}><h2>{group.label}</h2>{group.items.map((notice) => (
-                  <button
+                  <article
                     key={notice.id}
                     className={`notice-row panel ${notice.readAt ? "read" : "unread"}`}
-                    onClick={() => void markRead(notice)}
                   >
-                    <Avatar user={notice.actor} size="sm" />
-                    <div className="notice-copy">
-                      <strong>{notice.actor?.fullName || "Discere"}</strong>
-                      <span>{notificationText(notice.type)}</span>
-                      <small>{formatDate(notice.createdAt)}</small>
-                    </div>
-                    {!notice.readAt && <span className="unread-dot" />}
-                  </button>
+                    <button className="notice-main" onClick={() => void markRead(notice)}>
+                      <Avatar user={notice.actor} size="sm" />
+                      <div className="notice-copy">
+                        <strong>{notice.actor?.fullName || "Discere"}</strong>
+                        <span>{notificationText(notice.type)}</span>
+                        <small>{formatDate(notice.createdAt)}</small>
+                      </div>
+                    </button>
+                    {!notice.readAt && <button className="text-button notice-mark-read" onClick={() => void markRead(notice)}>Mark as read</button>}
+                    {!notice.readAt && <span className="unread-dot" aria-label="Unread" />}
+                  </article>
                 ))}</section>)}
                 {authenticated && !notices.length && (
                   <EmptyState

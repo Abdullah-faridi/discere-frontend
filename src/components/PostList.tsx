@@ -12,6 +12,7 @@ export default function PostList(props: {
   summaries: Record<string, string>;
   activePost?: string;
   comments: Record<string, CommentItem[]>;
+  interactionPendingIds: string[];
   onLike: (post: Post) => void;
   onSave: (post: Post) => void;
   onComment: (postId: string) => void;
@@ -115,19 +116,19 @@ export default function PostList(props: {
             </div>
           )}
           <div className="post-actions">
-            <button onClick={() => props.onLike(post)}>
-              <Heart size={16} />
+            <button className={post.likedByMe ? "interaction-active" : ""} disabled={props.interactionPendingIds.includes(post.id)} aria-pressed={Boolean(post.likedByMe)} aria-label={post.likedByMe ? "Unlike post" : "Like post"} onClick={() => props.onLike(post)}>
+              <Heart size={16} fill={post.likedByMe ? "currentColor" : "none"} />
               <span>{post._count?.likes ?? 0}</span>
-              <span className="action-label">Appreciate</span>
+              <span className="action-label">{post.likedByMe ? "Appreciated" : "Appreciate"}</span>
             </button>
             <button onClick={() => props.onComment(post.id)}>
               <MessageCircle size={16} />
               <span>{post._count?.comments ?? 0}</span>
               <span className="action-label">Discuss</span>
             </button>
-            <button onClick={() => props.onSave(post)}>
-              <Bookmark size={16} />
-              <span className="action-label">Save</span>
+            <button className={post.savedByMe ? "interaction-active" : ""} disabled={props.interactionPendingIds.includes(post.id)} aria-pressed={Boolean(post.savedByMe)} aria-label={post.savedByMe ? "Remove from saved posts" : "Save post"} onClick={() => props.onSave(post)}>
+              <Bookmark size={16} fill={post.savedByMe ? "currentColor" : "none"} />
+              <span className="action-label">{post.savedByMe ? "Saved" : "Save"}</span>
             </button>
             <button
               className="summarize-mobile"
@@ -238,4 +239,3 @@ export default function PostList(props: {
     </div>
   );
 }
-

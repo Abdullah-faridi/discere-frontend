@@ -58,6 +58,13 @@ function AppContent() {
   const [authOpen, setAuthOpen] = useState(false);
   const [posts, setPosts] = useState<Post[]>([]);
   const [profilePosts, setProfilePosts] = useState<Post[]>([]);
+  const [savedPosts, setSavedPosts] = useState<Post[]>([]);
+  const [likedPosts, setLikedPosts] = useState<Post[]>([]);
+  const [profilePostTab, setProfilePostTab] = useState<"posts" | "saved" | "liked">("posts");
+  const [collectionLoading, setCollectionLoading] = useState(false);
+  const [collectionHasMore, setCollectionHasMore] = useState(false);
+  const [collectionCursor, setCollectionCursor] = useState<string | null>(null);
+  const [interactionPendingIds, setInteractionPendingIds] = useState<string[]>([]);
   const [myPosts, setMyPosts] = useState<Post[]>([]);
   const [profilePostsLoading, setProfilePostsLoading] = useState(false);
   const [myPostsLoading, setMyPostsLoading] = useState(false);
@@ -73,6 +80,7 @@ function AppContent() {
   const [activePost, setActivePost] = useState<string | undefined>();
   const [profile, setProfile] = useState<User | undefined>();
   const profileLoadSequence = useRef(0);
+  const collectionLoadSequence = useRef(0);
   const [profileLists, setProfileLists] = useState<{
     followers: Array<{ follower: User }>;
     following: Array<{ following: User }>;
@@ -197,6 +205,44 @@ function AppContent() {
     return matching;
   }, []);
 
+  const loadOwnPostCollection = useCallback(async (collection: "saved" | "liked", reset = true) => {
+    if (!authenticated) return;
+    const requestId = ++collectionLoadSequence.current;
+    setCollectionLoading(true);
+    try {
+      const cursor = reset ? undefined : collectionCursor || undefined;
+      const params = new URLSearchParams({ limit: "30" });
+      if (cursor) params.set("cursor", cursor);
+      const result = await api<{ posts: Post[]; hasMore: boolean; nextCursor: string | null }>(`/posts/${collection}?${params.toString()}`);
+      if (requestId !== collectionLoadSequence.current) return;
+      const setter = collection === "saved" ? setSavedPosts : setLikedPosts;
+      setter((current) => reset ? result.posts || [] : [...current, ...(result.posts || [])]);
+      setCollectionHasMore(Boolean(result.hasMore));
+      setCollectionCursor(result.nextCursor || null);
+    } catch (cause) {
+      if (requestId === collectionLoadSequence.current) setError(cause instanceof Error ? cause.message : `Could not load ${collection} posts`);
+    } finally {
+      if (requestId === collectionLoadSequence.current) setCollectionLoading(false);
+    }
+  }, [authenticated, collectionCursor]);
+
+  const updatePostCollectionState = useCallback((postId: string, key: "likedByMe" | "savedByMe", value: boolean) => {
+    const update = (current: Post[]) => current.map((item) => {
+      if (item.id !== postId) return item;
+      const previous = Boolean(item[key]);
+      return {
+        ...item,
+        [key]: value,
+        ...(key === "likedByMe" ? { _count: { likes: Math.max(0, (item._count?.likes ?? 0) + (value === previous ? 0 : value ? 1 : -1)), comments: item._count?.comments ?? 0 } } : {}),
+      };
+    });
+    setPosts(update);
+    setProfilePosts(update);
+    setMyPosts(update);
+    setSavedPosts(update);
+    setLikedPosts(update);
+  }, []);
+
   const loadCurrentFollowing = useCallback(async () => {
     if (!authenticated || !identity?.id) return [] as string[];
     const result = await api<Array<{ following: User }>>(`/user/${identity.id}/following`);
@@ -270,6 +316,7 @@ function AppContent() {
       setView("profile");
       setProfile(undefined);
       setProfilePosts([]);
+      setProfilePostTab("posts");
       setProfilePostsLoading(true);
       setProfileLists({ followers: [], following: [] });
       try {
@@ -551,13 +598,23 @@ function AppContent() {
       setAuthOpen(true);
       return;
     }
+    if (interactionPendingIds.includes(post.id)) return;
+    const previous = Boolean(post.likedByMe);
+    const desired = !previous;
+    setInteractionPendingIds((current) => [...current, post.id]);
+    updatePostCollectionState(post.id, "likedByMe", desired);
     try {
-      await api(`/posts/${post.id}/like`, json({}));
-      await loadFeed(true);
+      const result = await api<{ liked?: boolean }>(`/posts/${post.id}/like`, json({}));
+      const confirmed = typeof result.liked === "boolean" ? result.liked : desired;
+      if (confirmed !== desired) updatePostCollectionState(post.id, "likedByMe", confirmed);
+      if (!confirmed) setLikedPosts((current) => current.filter((item) => item.id !== post.id));
     } catch (cause) {
+      updatePostCollectionState(post.id, "likedByMe", previous);
       setError(
         cause instanceof Error ? cause.message : "Could not update like",
       );
+    } finally {
+      setInteractionPendingIds((current) => current.filter((id) => id !== post.id));
     }
   }
 
@@ -566,11 +623,22 @@ function AppContent() {
       setAuthOpen(true);
       return;
     }
+    if (interactionPendingIds.includes(post.id)) return;
+    const previous = Boolean(post.savedByMe);
+    const desired = !previous;
+    setInteractionPendingIds((current) => [...current, post.id]);
+    updatePostCollectionState(post.id, "savedByMe", desired);
     try {
-      await api(`/posts/${post.id}/save-post`, json({}));
-      notify("Saved posts updated");
+      const result = await api<{ saved?: boolean }>(`/posts/${post.id}/save-post`, json({}));
+      const confirmed = typeof result.saved === "boolean" ? result.saved : desired;
+      if (confirmed !== desired) updatePostCollectionState(post.id, "savedByMe", confirmed);
+      if (!confirmed) setSavedPosts((current) => current.filter((item) => item.id !== post.id));
+      else notify("Post saved");
     } catch (cause) {
+      updatePostCollectionState(post.id, "savedByMe", previous);
       setError(cause instanceof Error ? cause.message : "Could not save post");
+    } finally {
+      setInteractionPendingIds((current) => current.filter((id) => id !== post.id));
     }
   }
 
@@ -1145,15 +1213,25 @@ function AppContent() {
             </div>
           )}
 
+          {view === "profile" && profile?.id === identity?.id && authenticated && (
+            <div className="profile-post-tabs" role="tablist" aria-label="Your posts">
+              <button className={profilePostTab === "posts" ? "selected" : ""} role="tab" aria-selected={profilePostTab === "posts"} onClick={() => setProfilePostTab("posts")}>Your posts</button>
+              <button className={profilePostTab === "saved" ? "selected" : ""} role="tab" aria-selected={profilePostTab === "saved"} onClick={() => { setProfilePostTab("saved"); void loadOwnPostCollection("saved"); }}>Saved posts</button>
+              <button className={profilePostTab === "liked" ? "selected" : ""} role="tab" aria-selected={profilePostTab === "liked"} onClick={() => { setProfilePostTab("liked"); void loadOwnPostCollection("liked"); }}>Liked posts</button>
+            </div>
+          )}
+
                     <FeedPage
-            view={view} profile={profile} posts={view === "profile" ? profilePosts : posts} loading={view === "profile" ? profilePostsLoading : loading} refreshing={refreshing}
+            view={view} profile={profile} posts={view === "profile" ? profilePostTab === "saved" ? savedPosts : profilePostTab === "liked" ? likedPosts : profilePosts : posts} loading={view === "profile" ? profilePostTab === "posts" ? profilePostsLoading : collectionLoading : loading} refreshing={refreshing}
             authenticated={authenticated} identity={identity} summaries={summaryByPost} activePost={activePost} comments={comments}
+            interactionPendingIds={interactionPendingIds}
             query={query} setQuery={setQuery} semantic={semantic} setSemantic={setSemantic}
             searchTab={searchTab} setSearchTab={setSearchTab} userSearchResults={userSearchResults} searchingUsers={searchingUsers} loadUserSearch={loadUserSearch} followingUserIds={followingUserIds} followPendingIds={followPendingIds} onFollow={followUser}
             setAuthOpen={setAuthOpen} setComposerOpen={setComposerOpen} setView={setView} loadFeed={loadFeed}
             toggleLike={toggleLike} toggleSave={toggleSave} loadComments={loadComments} sendComment={sendComment}
             loadProfile={loadProfile} summarize={summarize} editComment={editComment} deleteComment={deleteComment}
           />
+          {view === "profile" && profile?.id === identity?.id && profilePostTab !== "posts" && collectionHasMore && <div className="profile-load-more"><button className="button" disabled={collectionLoading} onClick={() => void loadOwnPostCollection(profilePostTab, false)}>{collectionLoading ? "Loading…" : "Load more"}</button></div>}
 {view === "rooms" && (
             <>
               {!activeRoom ? (

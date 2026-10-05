@@ -27,6 +27,8 @@ export type Post = {
   author: User;
   media: Media[];
   _count?: { likes: number; comments: number };
+  likedByMe?: boolean;
+  savedByMe?: boolean;
   scoreBreakdown?: string;
 };
 export type CommentItem = {
@@ -74,4 +76,3 @@ export type JobResult = {
   } | null;
   failedReason?: string;
 };
-
